@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Аудио загрузчик</title>
+    <style>
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .player {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Загрузка аудиофайлов</h1>
+
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" name="file" accept="audio/*" required>
+            <button type="submit">Загрузить</button>
+        </form>
+
+        <div class="player" id="playerContainer" style="display:none;">
+            <h3>Воспроизведение:</h3>
+            <audio controls id="audioPlayer"></audio>
+        </div>
+
+    </div>
+    <div class="user-info">
+        <a href="/logout" class="logout-btn">Выйти из аккаунта</a>
+    </div>
+
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData();
+            formData.append('file', e.target.file.files[0]);
+
+            try {
+                const response = await fetch('/upload/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    window.location.href = `/check_sound?result=${result.result}`;
+                }
+
+            } catch (error) {
+                console.error('Ошибка:', error);
+                alert('Ошибка при загрузке файла');
+            }
+        });
+
+        function playAudio(filename) {
+            const player = document.getElementById('audioPlayer');
+            player.src = `/download/${filename}`;
+            document.getElementById('playerContainer').style.display = 'block';
+            player.play();
+        }
+
+    </script>
+</body>
+</html>
