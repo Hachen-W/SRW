@@ -16,6 +16,14 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_EXTENSIONS = {"wav", "mp3", "aac", "flac", "ogg"}
 
 
+# Эта функция срабатывает каждый раз, когда в очереди появляется новое сообщение
+def process_message(ch, method, properties, body):
+    # Превращаем текстовую строку body обратно в удобный словарь
+    task_data = json.loads(body)
+    
+    # Дальше нейросети должны начать анализ...
+
+
 def calculate_snr(audio):
     # Применяем метод Уэлча для анализа спектра
     frequencies, psd = welch(audio, fs=16000, nperseg=320)
