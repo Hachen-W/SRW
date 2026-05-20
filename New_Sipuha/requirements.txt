@@ -6,3 +6,8 @@ python-multipart
 librosa
 # библиотека, модуль scipy.signal которой нужен для вычисления SNR методом Уэлча и спектральной фильтрации
 scipy
+pika
+fastapi
+redis
+torch
+python-dotenv
