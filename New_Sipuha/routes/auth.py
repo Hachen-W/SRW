@@ -60,7 +60,7 @@ class AccessChecker:
             raise HTTPException(status_code=403, detail="Not enough permissions")
         return token_payload
 
-router_auth = APIRouter()
+router_auth = APIRouter(tags=["Authentification"])
 
 # Register (writing to bd)
 @router_auth.post("/auth/register", dependencies=[Depends(rate_limit_dependency)])

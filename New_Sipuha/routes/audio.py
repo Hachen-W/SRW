@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from database.create_tables import get_db
 from services.auth_service import AuthService
-from auth import rate_limit_dependency, security_bearer
+from .auth import rate_limit_dependency, security_bearer
 
 router_audio = APIRouter(prefix="/audio", tags=["Audio Processing"])
 
@@ -66,7 +66,8 @@ def verify_audio(request: Request, db: Session = Depends(get_db)):
 # 2. Отправка аудио на детекцию (Доступен любому валидному пользователю)
 @router_audio.post("/detect", status_code=202,
                  dependencies=[
-                     Depends(rate_limit_dependency), 
+                     Depends(rate_limit_dependency),
+                     Depends(AudioAccessChecker(["SERVICE", "ADMIN"])),
                      Depends(security_bearer)
                  ])
 async def detect_deepfake(
