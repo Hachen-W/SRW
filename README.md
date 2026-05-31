@@ -27,3 +27,41 @@ python worker.py
 source /home/hachen/SRW/venv/bin/activate
 uvicorn main:app --reload
 ```
+
+**Запуск тренировки:**
+```bash
+python train.py
+```
+
+### Система обнаружения подделки голоса
+
+#### worker.py
+
+**Технический конвейер:**
+1. FastAPI,
+2. RabbitMQ,
+3. Worker,
+4. Redis,
+
+**Структура нейросети:**
+1. Audio Wave
+2. LFCC
+3. CNN Layers
+4. Global Max Pooling
+5. Linear Classifier
+6. Sigmoid
+7. Verdict
+
+#### train.py
+
+**Тренировочный цикл:**
+- Архитектура сети (DeepfakeDetector на базе LFCC и Global Max Pooling).
+- Функция потерь (BCELoss — бинарная кросс-энтропия).
+- Загрузчик данных (ASVspoofDataset и DataLoader с динамическим паддингом).
+- Алгоритм оптимизации (Adam).
+
+**Machine Learning Pipeline:**
+- Датасет ASVspoof.
+- Скрипт `train.py`.
+- Файл весов (`weights.pth`).
+- Загрузка в `worker.py`.

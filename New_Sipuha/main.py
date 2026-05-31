@@ -1,4 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi.responses import JSONResponse
 import tempfile
 import shutil
 import uuid
@@ -9,6 +10,18 @@ import os
 from dotenv import load_dotenv
 import redis
 
+from database.create_tables import create_tables
+from routes import router_auth, router_audio
+from contextlib import asynccontextmanager
+from authx.exceptions import JWTDecodeError
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_tables()
+    yield
+
+
 # Загружаем переменные из файла .env
 load_dotenv()
 
@@ -16,7 +29,8 @@ load_dotenv()
 redis_host = os.getenv("REDIS_HOST", "localhost") 
 redis_client = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=True)
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
+app.include_router(router_auth)
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_EXTENSIONS = {"wav", "mp3", "aac", "flac", "ogg"}
 
@@ -74,3 +88,16 @@ async def detect_deepfake(file: UploadFile = File(...)):
 
     # 5. Сразу же возвращаем ответ клиенту. Файл НЕ удаляем — его удалит воркер!
     return {"status": "accepted", "request_id": req_id}
+
+
+@app.exception_handler(JWTDecodeError)
+async def authx_jwt_decode_handler(request: Request, exc: JWTDecodeError):
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "Сессия истекла. Пожалуйста, войдите снова.", "error": str(exc)}
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
