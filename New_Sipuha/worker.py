@@ -16,20 +16,50 @@ import csv
 
 def measure_time(func):
     def wrapper(*args, **kwargs):
-        # Вычисляем длительность аудиосигнала из первого аргумента
-        audio_duration = len(args[0]) / 16000 if args else 0
-
         start_time = time.perf_counter()
         result = func(*args, **kwargs)
         execution_time = time.perf_counter() - start_time
 
-        # Фиксируем данные в CSV-файл
+        audio_duration = 0
+
+        # 1. Если аудиопеременная пришла во входных аргументах
+        if args and isinstance(args[0], (np.ndarray, torch.Tensor)):
+            audio_duration = len(args[0]) / 16000
+
+        # 2. Если функция сама вернула аудио
+        elif (
+                isinstance(result, tuple) and
+                len(result) > 0 and
+                isinstance(result[0], (np.ndarray, torch.Tensor))
+                ):
+            audio_duration = len(result[0]) / 16000
+
+        # Запись в лог
         with open('benchmark_log.csv', mode='a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([func.__name__, audio_duration, execution_time])
 
         return result
     return wrapper
+
+
+@measure_time
+def load_audio_file(file_path):
+    """Загрузка аудиофайла с диска через librosa"""
+    return librosa.load(file_path, sr=16000)
+
+
+@measure_time
+def save_result_to_redis(request_id, result_payload):
+    """Сохранение сериализованного вердикта в базу данных Redis"""
+    redis_client.set(request_id, json.dumps(result_payload), ex=3600)
+
+
+@measure_time
+def cleanup_temporary_file(file_path):
+    """Удаление временного файла с диска для предотвращения утечек памяти"""
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
 
 class ASVspoofDataset(Dataset):
@@ -150,51 +180,43 @@ def process_message(ch, method, properties, body):
 
     print(f"[*] Началась обработка файла: {file_path}")
 
+    # Инициализируем переменную для блока finally
+    audio = None
+
     try:
-        # 1. Получаем audio
-        audio, sr = librosa.load(file_path, sr=16000)
-        # 2. Проверка длительности
+        # 1. Модульная загрузка
+        audio, sr = load_audio_file(file_path)
+
         duration = len(audio) / sr
         if duration < 1.0:
             print(f"[-] Файл слишком короткий: {duration} сек.")
-            result_payload = {
-                "status": "failed",
-                "reason": "audio_too_short"
-            }
-            redis_client.set(
-                task_data["request_id"], json.dumps(result_payload), ex=3600
-                )
+            result_payload = {"status": "failed", "reason": "audio_too_short"}
+            save_result_to_redis(task_data["request_id"], result_payload)
             return
-        else:
-            # 3. Расчет SNR и фильтрация
-            snr_value = calculate_snr(audio)
-            if snr_value < 5:
-                audio = apply_wiener_filter(audio)
 
-            # 4. Преобразуем в тензор и запускаем нейросеть
-            prediction = run_inference(audio, model)
+        # 2. Расчет SNR и фильтрация
+        snr_value = calculate_snr(audio)
+        if snr_value < 5:
+            audio = apply_wiener_filter(audio)
 
-            verdict = "spoof" if prediction > 0.5 else "bonafide"
-            result_payload = {
-                "status": "completed",
-                "prediction": prediction,
-                "verdict": verdict
-                }
+        # 3. Инференс
+        prediction = run_inference(audio, model)
+        verdict = "spoof" if prediction > 0.5 else "bonafide"
+        result_payload = {
+            "status": "completed",
+            "prediction": prediction,
+            "verdict": verdict
+        }
 
-            redis_client.set(
-                task_data["request_id"], json.dumps(result_payload), ex=3600
-                )
+        # 4. Модульное сохранение
+        save_result_to_redis(task_data["request_id"], result_payload)
 
     except Exception as e:
         print(f"[!] Ошибка при обработке: {e}")
 
     finally:
-        # 5. Чистим за собой диск
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            print(f"[+] Временный файл удален: {file_path}")
-
-        # Подтверждаем RabbitMQ, что задача удалена из очереди
+        # 5. Модульная очистка
+        cleanup_temporary_file(file_path)
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
