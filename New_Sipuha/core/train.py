@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-# Импортируем классы из вашего воркера
-from worker import DeepfakeDetector, ASVspoofDataset
+from worker import DeepfakeDetector
 import numpy as np
 from torch.utils.data import Dataset
 
@@ -26,7 +25,9 @@ def my_collate_fn(batch):
     audios, labels = zip(*batch)
     audio_tensors = [torch.from_numpy(a).float() for a in audios]
     # Выравниваем нулями до самого длинного трека в батче
-    padded_audios = torch.nn.utils.rnn.pad_sequence(audio_tensors, batch_first=True)
+    padded_audios = torch.nn.utils.rnn.pad_sequence(
+        audio_tensors, batch_first=True
+        )
     # Добавляем размерность [Batch, 1] для корректной работы BCELoss
     labels_tensor = torch.tensor(labels, dtype=torch.float32).unsqueeze(1)
     return padded_audios, labels_tensor
@@ -50,21 +51,23 @@ if __name__ == '__main__':
 
     # 3. Цикл обучения
     num_epochs = 50
-    model.train() # Переводим модель в режим обучения
+    model.train()  # Переводим модель в режим обучения
 
     for epoch in range(num_epochs):
         running_loss = 0.0
         for padded_audios, labels_tensor in train_loader:
             optimizer.zero_grad()                      # Сброс градиентов
             predictions = model(padded_audios)         # Прямой проход
-            loss = criterion(predictions, labels_tensor) # Расчет ошибки
+            loss = criterion(predictions, labels_tensor)  # Расчет ошибки
             loss.backward()                            # Обратный проход
             optimizer.step()                           # Обновление весов
 
             running_loss += loss.item()
 
         epoch_loss = running_loss / len(train_loader)
-        print(f"📦 Эпоха [{epoch+1}/{num_epochs}], Ошибка (Loss): {epoch_loss:.4f}")
+        print(
+            f"Эпоха [{epoch+1}/{num_epochs}], Ошибка (Loss): {epoch_loss:.4f}"
+            )
 
     # 4. Сохранение результатов
     torch.save(model.state_dict(), 'deepfake_model.pth')
