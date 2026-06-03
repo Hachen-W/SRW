@@ -3,3 +3,4 @@ venv
 __pycache__
 settings/__pycache__/*
 *.db
+*.csv

@@ -85,7 +85,7 @@ async def detect_deepfake(
         "timestamp": time.time(),
         "file_path": file_path,
         "priority": "high"
-    }
+        }
 
     channel.basic_publish(
         exchange='',

@@ -4,6 +4,8 @@ uvicorn==0.38.0
 python-multipart
 # библиотека для работы с аудио
 librosa
+datasets[audio]
+soundfile
 # библиотека, модуль scipy.signal которой нужен для вычисления SNR методом Уэлча и спектральной фильтрации
 scipy
 pika
