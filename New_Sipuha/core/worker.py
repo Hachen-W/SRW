@@ -78,7 +78,7 @@ if __name__ == "__main__":
     model_type = os.getenv("MODEL_TYPE", "pytorch").lower()
 
     # Инициализируем логгер с именем конкретной модели
-    logger = MetricsLogger(log_file=f"{model_type}.csv", batch_size=10)
+    logger = MetricsLogger(log_file=f"logs/{model_type}.csv", batch_size=10)
 
     print(f"[*] Инициализация модели: {model_type}")
     if model_type == "pyara":

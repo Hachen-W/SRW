@@ -1,5 +1,4 @@
 import os
-import sys
 import uuid
 import time
 import json
@@ -7,13 +6,14 @@ import pika
 import redis
 import tempfile
 import numpy as np
+
 import scipy.io.wavfile as wavfile
 from datasets import load_dataset, Audio
 from utils.metrics import MetricsLogger
+from dotenv import load_dotenv
 
 
-# Учим Python видеть корень проекта
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv()
 
 # Настройки инфраструктуры
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -31,7 +31,8 @@ channel = connection.channel()
 channel.queue_declare(queue=QUEUE_NAME, durable=True)
 
 # Создаем логгер для замера сквозного системного E2E
-logger = MetricsLogger(log_file='network_benchmark_log.csv', batch_size=10)
+model_type = os.getenv("MODEL_TYPE", "pytorch").lower()
+logger = MetricsLogger(log_file=f'logs/{model_type}.csv', batch_size=10)
 
 print("[*] Подключение к датасету...")
 dataset = load_dataset(
@@ -106,3 +107,4 @@ connection.close()
 print("[+] Интеграционный прогон завершен! " +
       "Данные записаны в network_benchmark_log.csv"
       )
+os._exit(0)

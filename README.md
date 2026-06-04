@@ -50,7 +50,7 @@ python worker.py
 
 # Запускаем трассировку (Терминал №2)
 source /home/hachen/SRW/venv/bin/activate
-python benchmarks/timing_pytorch.py
+python -m benchmarks.timing_pytorch
 ```
 
 ### Запуск тренировки
