@@ -19,13 +19,14 @@ import uuid
 # Глобальный буфер для накопления метрик (решение проблемы дискового I/O)
 METRICS_BUFFER = []
 BATCH_SIZE = 10
+LOGGING_FILE = 'pyara_log.csv'
 
 
 def flush_metrics():
     """Сброс накопленных метрик в файл"""
     if not METRICS_BUFFER:
         return
-    with open('benchmark_log.csv', mode='a', newline='') as f:
+    with open(LOGGING_FILE, mode='a', newline='') as f:
         writer = csv.writer(f)
         writer.writerows(METRICS_BUFFER)
     METRICS_BUFFER.clear()
