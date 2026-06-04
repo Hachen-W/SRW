@@ -6,6 +6,7 @@ import torchaudio.transforms as T
 import numpy as np
 from scipy.signal import welch, wiener
 from .base import BaseDetector
+import os
 
 
 class DeepfakeDetector(nn.Module):
@@ -47,7 +48,10 @@ class DeepfakeDetector(nn.Module):
 
 
 class PyTorchDetector(BaseDetector):
-    def __init__(self, model_path='deepfake_model.pth'):
+    def __init__(self, model_path=None):
+        if model_path is None:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(current_dir, 'deepfake_model.pth')
         self.model = DeepfakeDetector()
         self.model.load_state_dict(torch.load(model_path))
         self.model.eval()
