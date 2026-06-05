@@ -1,10 +1,16 @@
 import pandas as pd
 
+
+FILE_NAME = 'pyara.csv'
+
 # 1. Загрузка данных
 try:
-    df = pd.read_csv('benchmark_log.csv', names=['request_id', 'function_name', 'audio_duration', 'execution_time'])
+    df = pd.read_csv(FILE_NAME, names=[
+        'request_id', 'function_name', 'audio_duration', 'execution_time'
+        ]
+        )
 except FileNotFoundError:
-    print("Файл benchmark_log.csv не найден.")
+    print(f"Файл {FILE_NAME} не найден.")
     exit()
 
 # Отфильтруем строки с нулевой длиной (во избежание деления на ноль)
@@ -27,11 +33,15 @@ print("-" * 50)
 # Нас интересует только End-to-End время обслуживания (Ts) каждой заявки.
 # В worker.py оно записано как 'process_message_e2e'.
 # В timing.py оно записано как 'timing_script_e2e'.
-e2e_df = df[df['function_name'].isin(['process_message_e2e', 'timing_script_e2e'])]
+e2e_df = df[df['function_name'].isin(
+    ['process_message_e2e', 'timing_script_e2e']
+    )]
 
 if e2e_df.empty:
     print("Внимание: End-to-End метрики (process_message_e2e) не найдены.")
-    print("Рассчитываем E[Ts] и Var[Ts] путем агрегации всех этапов по request_id.")
+    print("Рассчитываем E[Ts] и Var[Ts]"
+          + " путем агрегации всех этапов по request_id."
+          )
     # Если E2E метрики нет, суммируем время всех функций для КАЖДОГО файла
     # Это честный метод учета ковариации
     total_time_per_request = df.groupby('request_id')['execution_time'].sum()
