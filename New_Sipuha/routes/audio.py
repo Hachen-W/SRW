@@ -6,8 +6,9 @@ import shutil
 import tempfile
 import pika
 import redis
+import asyncio
 from fastapi import APIRouter, Depends, UploadFile, \
-    File, HTTPException, Request
+    File, HTTPException, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from database.create_tables import get_db
@@ -18,9 +19,8 @@ router_audio = APIRouter(prefix="/audio", tags=["Audio Processing"])
 
 # Инициализация Redis
 redis_host = os.getenv("REDIS_HOST", "localhost")
-redis_client = redis.Redis(
-    host=redis_host, port=6379, db=0, decode_responses=True
-    )
+redis_client_raw = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=False)
+redis_client_json = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=True)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_EXTENSIONS = {"wav", "mp3", "aac", "flac", "ogg"}
@@ -33,7 +33,6 @@ def get_current_verified_session(
     return AuthService.protected_route(token, db)
 
 
-# Модифицированный класс для проверки ролей
 class AudioAccessChecker:
     def __init__(self, allowed_roles: list[str]):
         self.allowed_roles = allowed_roles
@@ -48,7 +47,70 @@ class AudioAccessChecker:
         return session_data
 
 
-# Отправка аудио на детекцию (Доступен любому валидному пользователю)
+@router_audio.websocket("/stream")
+async def websocket_audio_stream(websocket: WebSocket, db: Session = Depends(get_db)):
+    await websocket.accept()
+    
+    # Валидация токена (из query параметров или заголовка)
+    token = websocket.query_params.get("token") or websocket.headers.get("authorization")
+    if token and token.startswith("Bearer "):
+        token = token.split(" ")[1]
+    
+    try:
+        session_data = AuthService.protected_route(token, db)
+        if session_data.get("role") not in ["SERVICE", "ADMIN"]:
+            await websocket.close(code=4003, reason="Forbidden")
+            return
+    except Exception:
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
+
+    session_id = str(uuid.uuid4())
+    audio_channel = f"stream:audio:{session_id}"
+    result_channel = f"stream:result:{session_id}"
+    
+    # Подписываемся на канал результатов от воркера
+    pubsub = redis_client_json.pubsub()
+    pubsub.subscribe(result_channel)
+    
+    async def listen_to_worker():
+        """Асинхронная задача для чтения ответов из Redis от нашего ML-воркера"""
+        try:
+            while True:
+                # Проверяем наличие сообщений от воркера
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=0.01)
+                if message and message['type'] == 'message':
+                    data = json.loads(message['data'])
+                    await websocket.send_json(data)
+                    
+                    # Если воркер прислал команду на уничтожение сессии - прерываем цикл
+                    if data.get("status") == "terminated":
+                        await websocket.close(code=4003)
+                        break
+                await asyncio.sleep(0.01)
+        except Exception as e:
+            print(f"Ошибка отправки ответа клиенту: {e}")
+
+    # Запускаем фоновое слушание ответов воркера
+    listen_task = asyncio.create_task(listen_to_worker())
+
+    try:
+        while True:
+            # Принимаем бинарный чанк аудио от IVR-системы
+            chunk_bytes = await websocket.receive_bytes()
+            
+            # Пересылаем чанк воркеру в соседний терминал через RAM
+            redis_client_raw.publish(audio_channel, chunk_bytes)
+
+    except WebSocketDisconnect:
+        print(f"[*] IVR разорвал соединение для сессии: {session_id}")
+    finally:
+        # Чистим ресурсы
+        listen_task.cancel()
+        pubsub.unsubscribe(result_channel)
+        redis_client_json.publish(audio_channel, json.dumps({"control": "EOF"}))
+
+
 @router_audio.post("/detect", status_code=202, dependencies=[
     Depends(rate_limit_dependency),
     Depends(AudioAccessChecker(["SERVICE", "ADMIN"])),
@@ -97,7 +159,6 @@ async def detect_deepfake(
     return {"status": "accepted", "request_id": req_id}
 
 
-# 3. Получение результата (Доступен любому валидному пользователю)
 @router_audio.get("/result/{request_id}", dependencies=[
     Depends(rate_limit_dependency),
     Depends(security_bearer)
@@ -106,7 +167,7 @@ async def get_result(
         request_id: str,
         current_session: dict = Depends(get_current_verified_session)
         ):
-    raw_result = redis_client.get(request_id)
+    raw_result = redis_client_json.get(request_id)
 
     if raw_result is None:
         return {"status": "processing"}

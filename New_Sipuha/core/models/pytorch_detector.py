@@ -182,3 +182,29 @@ class PyTorchDetector(BaseDetector):
             "prediction": prediction,
             "verdict": verdict
         }
+
+    def process_stream(self, audio_bytes: bytes) -> float:
+        """
+        Принимает сырые байты звука (PCM 16-bit, 16 кГц) из скользящего окна,
+        выполняет проверку SNR, фильтрацию и возвращает вероятность дипфейка.
+        """
+        if not audio_bytes:
+            return 0.0
+
+        # 1. Конвертируем байты PCM 16-bit в нормализованный float32 numpy-массив
+        audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+        # 2. Вычисление SNR
+        snr_value, _ = self._calculate_snr(audio_np)
+
+        # 3. Адаптивная фильтрация Винера при сильных шумах
+        if snr_value < 5:
+            audio_np, _ = self._apply_wiener_filter(audio_np)
+
+        # 4. Перевод в тензор и инференс на целевом девайсе
+        audio_tensor = torch.from_numpy(audio_np).unsqueeze(0).float().to(self.device)
+
+        with torch.inference_mode():
+            prediction = self.model(audio_tensor).item()
+
+        return prediction
