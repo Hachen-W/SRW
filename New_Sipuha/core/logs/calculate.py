@@ -1,17 +1,27 @@
 import pandas as pd
 
-
-FILE_NAME = 'pyara.csv'
+# ВАЖНО: Указываем файл логов производительности из папки logs/, 
+# так как именно туда воркер пишет временные метки 'process_message_e2e'
+FILE_NAME = 'logs/pyara.csv'  # или 'logs/pytorch.csv'
 
 # 1. Загрузка данных
 try:
+    # Используем header=0, чтобы Pandas корректно пропустил первую строку, если там есть заголовок
     df = pd.read_csv(FILE_NAME, names=[
         'request_id', 'function_name', 'audio_duration', 'execution_time'
-        ]
-        )
+        ], header=0
+    )
 except FileNotFoundError:
-    print(f"Файл {FILE_NAME} не найден.")
+    print(f"Файл {FILE_NAME} не найден. Убедитесь, что запустили воркер и он успел накопить логи.")
     exit()
+
+# БЕЗОПАСНОСТЬ: Принудительно переводим числовые колонки в формат float.
+# Если там окажется текст (например, дубликат заголовка), он превратится в NaN.
+df['audio_duration'] = pd.to_numeric(df['audio_duration'], errors='coerce')
+df['execution_time'] = pd.to_numeric(df['execution_time'], errors='coerce')
+
+# Удаляем строки, где конвертация не удалась
+df = df.dropna(subset=['audio_duration', 'execution_time'])
 
 # Отфильтруем строки с нулевой длиной (во избежание деления на ноль)
 df = df[df['audio_duration'] > 0].copy()
@@ -31,19 +41,14 @@ print("-" * 50)
 
 # 2. Истинные расчеты для M/G/1
 # Нас интересует только End-to-End время обслуживания (Ts) каждой заявки.
-# В worker.py оно записано как 'process_message_e2e'.
-# В timing.py оно записано как 'timing_script_e2e'.
 e2e_df = df[df['function_name'].isin(
     ['process_message_e2e', 'timing_script_e2e']
     )]
 
 if e2e_df.empty:
     print("Внимание: End-to-End метрики (process_message_e2e) не найдены.")
-    print("Рассчитываем E[Ts] и Var[Ts]"
-          + " путем агрегации всех этапов по request_id."
-          )
+    print("Рассчитываем E[Ts] и Var[Ts] путем агрегации всех этапов по request_id.")
     # Если E2E метрики нет, суммируем время всех функций для КАЖДОГО файла
-    # Это честный метод учета ковариации
     total_time_per_request = df.groupby('request_id')['execution_time'].sum()
 else:
     # Берем готовое E2E время для каждого файла

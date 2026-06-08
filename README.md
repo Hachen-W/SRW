@@ -31,8 +31,16 @@ python core/worker.py
 source /home/hachen/SRW/venv/bin/activate
 uvicorn main:app --reload
 ```
+### Оценка метрик нейросетей
 
-### Тестирование программы
+**Директория:** `New_Sipuha/core`
+
+**Команды:**
+```bash
+python -m benchmarks.evaluate_streaming --model pyara --max_samples 100
+```
+
+### Таймирование программы
 
 **Директория:** `New_Sipuha/core`
 

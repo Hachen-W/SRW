@@ -3,6 +3,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, IterableDataset
 import torch.nn.functional as F
 from datasets import load_dataset, Audio
+
+# Исправлено: Импортируем из общего модуля моделей для стабильного запуска
 from models.pytorch_detector import DeepfakeDetector
 
 
@@ -15,7 +17,7 @@ class StreamingAudioDataset(IterableDataset):
         self.dataset = load_dataset(hf_dataset_name, split=split, streaming=True)
         self.dataset = self.dataset.shuffle(buffer_size=1000, seed=42)
         
-        # 2. Оставляем только автоматический ресемплинг до 16000 Гц
+        # 2. Автоматический ресемплинг до 16000 Гц
         self.dataset = self.dataset.cast_column(
             "audio", Audio(sampling_rate=target_sr)
         )
@@ -24,19 +26,15 @@ class StreamingAudioDataset(IterableDataset):
 
     def process_data(self, dataset):
         for item in dataset:
-            # Извлекаем numpy-массив со звуком и метку
             audio_array = item["audio"]["array"]
             label = item["label"] 
             
-            # Конвертируем в PyTorch тензор
             waveform = torch.tensor(audio_array, dtype=torch.float32)
 
-            # Безопасное приведение к моно, если аудио оказалось многоканальным (стерео)
+            # Безопасное приведение к моно
             if waveform.ndim > 1:
-                # Если форма (channels, time), усредняем по нулевой оси
                 if waveform.shape[0] < waveform.shape[1]:
                     waveform = torch.mean(waveform, dim=0)
-                # Если форма (time, channels), усредняем по первой оси
                 else:
                     waveform = torch.mean(waveform, dim=1)
 
@@ -61,12 +59,10 @@ def my_collate_fn(batch):
 
 
 if __name__ == '__main__':
-    # Используем открытый датасет с Hugging Face вместо Kaggle
     hf_dataset_name = "garystafford/deepfake-audio-detection" 
 
-    print("Подключение к потоковому датасету Hugging Face...")
+    print("[*] Подключение к потоковому датасету Hugging Face...")
     
-    # Инициализация датасета
     train_dataset = StreamingAudioDataset(
         hf_dataset_name=hf_dataset_name,
         split="train",
@@ -74,8 +70,6 @@ if __name__ == '__main__':
         duration_sec=4
     )
 
-    # ВАЖНО: При использовании IterableDataset параметр shuffle=True не поддерживается,
-    # а num_workers лучше оставить 0 (чтобы потоки не скачивали одни и те же данные)
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=32,
@@ -83,42 +77,64 @@ if __name__ == '__main__':
         num_workers=0
     )
 
-    # Инициализация модели, устройства и оптимизатора
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Синхронизация устройств инференса и тренировки (CUDA -> MPS -> CPU)
+    device = torch.device(
+        'cuda' if torch.cuda.is_available()
+        else 'mps' if torch.backends.mps.is_available()
+        else 'cpu'
+    )
+    
     model = DeepfakeDetector().to(device)
     criterion = nn.BCELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0003) # Немного подняли LR для адаптации 256 признаков
 
+    # Настройка оптимизаций
     num_epochs = 10
-    model.train()
+    
+    # Косинусный планировщик скорости обучения для плавной сходимости
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+    
+    # Скалер градиентов для AMP (смешанной точности) на CUDA
+    use_amp = device.type == 'cuda'
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
-    print(f"Начинаем обучение на {device}...")
+    model.train()
+    print(f"[*] Начинаем обучение новой архитектуры на устройстве: {str(device).upper()}...")
     
     for epoch in range(num_epochs):
         running_loss = 0.0
         batches = 0
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"--- Эпоха {epoch+1}/{num_epochs} (Текущий LR: {current_lr:.6f}) ---")
         
-        # Данные будут скачиваться и обрабатываться батч за батчем
         for padded_audios, labels_tensor in train_loader:
             padded_audios = padded_audios.to(device)
             labels_tensor = labels_tensor.to(device)
 
             optimizer.zero_grad()
-            predictions = model(padded_audios)
-            loss = criterion(predictions, labels_tensor)
-            loss.backward()
-            optimizer.step()
+            
+            # Включаем Mixed Precision контекст, если тренируемся на GPU
+            with torch.amp.autocast(device_type=device.type, enabled=use_amp):
+                predictions = model(padded_audios)
+                loss = criterion(predictions, labels_tensor)
+
+            # Обратный проход через скалер градиентов
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             running_loss += loss.item()
             batches += 1
             
-            # Печатаем прогресс каждые 10 батчей
             if batches % 10 == 0:
-                print(f"Эпоха [{epoch+1}/{num_epochs}], Батч: {batches}, Loss: {loss.item():.4f}")
+                print(f"-> Батч: {batches}, Loss: {loss.item():.4f}")
 
-        # Средний loss за эпоху
+        # Обновляем скорость обучения в конце каждой эпохи
+        scheduler.step()
+
         epoch_loss = running_loss / batches if batches > 0 else 0
-        print(f"==> Эпоха [{epoch+1}/{num_epochs}] завершена. Средняя Ошибка (Loss): {epoch_loss:.4f}\n")
+        print(f"==> Эпоха [{epoch+1}/{num_epochs}] завершена. Средний Loss: {epoch_loss:.4f}\n")
 
-    torch.save(model.state_dict(), 'deepfake_model.pth')
-    print("💾 Обучение завершено! Веса успешно сохранены в файл 'deepfake_model.pth'!")
+    # Сохраняем веса под обновленную структуру пулинга
+    torch.save(model.state_dict(), 'models/deepfake_model.pth')
+    print("💾 Обучение завершено! Новые веса успешно записаны в 'models/deepfake_model.pth'!")

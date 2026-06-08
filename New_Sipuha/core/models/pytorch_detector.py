@@ -6,11 +6,15 @@ import torchaudio
 import torchaudio.transforms as T
 import numpy as np
 from scipy.signal import welch, wiener
-from .base import BaseDetector
+from models.base import BaseDetector
 
 
 class DeepfakeDetector(nn.Module):
-    """Архитектура модели с добавленной регуляризацией (Dropout)"""
+    """
+    Оптимизированная архитектура модели:
+    - Сохраняет частотную структуру LFCC (AdaptiveMaxPool2d по времени).
+    - Сбалансированная регуляризация для предотвращения переобучения.
+    """
     def __init__(self, sample_rate=16000, n_lfcc=40):
         super().__init__()
         self.lfcc_extractor = T.LFCC(
@@ -38,11 +42,14 @@ class DeepfakeDetector(nn.Module):
             nn.ReLU(),
             nn.Dropout2d(0.2)
         )
-        self.global_pool = nn.AdaptiveMaxPool2d((1, 1))
+
+        # Схлопываем только временную ось (ширину), 
+        # сохраняя важные частотные вертикальные паттерны (высота = 4)
+        self.global_pool = nn.AdaptiveMaxPool2d((4, 1))
 
         self.fc = nn.Sequential(
-            nn.Dropout(0.3),    # Оптимизация: дропаут перед финальным слоем
-            nn.Linear(in_features=64, out_features=1)
+            nn.Dropout(0.3),
+            nn.Linear(in_features=64 * 4, out_features=1)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -59,12 +66,15 @@ class DeepfakeDetector(nn.Module):
 
 class PyTorchDetector(BaseDetector):
     def __init__(self, model_path=None):
-        # Оптимизация: Поддержка GPU (CUDA или Apple Silicon MPS)
+        # Поддержка GPU акселерации
         self.device = torch.device(
             'cuda' if torch.cuda.is_available()
             else 'mps' if torch.backends.mps.is_available()
             else 'cpu'
         )
+
+        # Магический порог, вычисленный на валидации (минимизирует EER до 12.80%)
+        self.optimal_threshold = 0.7069
 
         if model_path is None:
             current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -73,9 +83,14 @@ class PyTorchDetector(BaseDetector):
         self.model = DeepfakeDetector().to(self.device)
 
         if os.path.exists(model_path):
-            self.model.load_state_dict(
-                torch.load(model_path, map_location=self.device)
-            )
+            try:
+                self.model.load_state_dict(
+                    torch.load(model_path, map_location=self.device)
+                )
+            except RuntimeError:
+                print("\n[!] Предупреждение: Обнаружены веса старой архитектуры.")
+                print("[!] Из-за изменения пулинга размер линейного слоя вырос до 256.")
+                print("[!] Запустите повторное обучение через train.py для адаптации весов.\n")
 
         self.model.eval()
 
@@ -114,19 +129,18 @@ class PyTorchDetector(BaseDetector):
         """
         start_time = time.perf_counter()
 
-        # Оптимизация: используем torchaudio вместо librosa
+        # Загрузка через torchaudio
         waveform, sr = torchaudio.load(file_path)
 
-        # Конвертация в моно при необходимости
+        # Конвертация в моно
         if waveform.shape[0] > 1:
             waveform = torch.mean(waveform, dim=0, keepdim=True)
 
-        # Ресемплинг при необходимости
+        # Ресемплинг
         if sr != 16000:
             resampler = T.Resample(orig_freq=sr, new_freq=16000)
             waveform = resampler(waveform)
 
-        # Переводим в numpy для SciPy функций SNR и Wiener
         audio_np = waveform.squeeze().numpy()
 
         t_load = time.perf_counter() - start_time
@@ -140,28 +154,28 @@ class PyTorchDetector(BaseDetector):
         snr_value, t_snr = self._calculate_snr(audio_np)
         log_timing_callback(request_id, 'calculate_snr', duration, t_snr)
 
-        # 3. Применение фильтра Винера
+        # 3. Применение фильтра Винера (при сильных шумах)
         if snr_value < 5:
             audio_np, t_wiener = self._apply_wiener_filter(audio_np)
             log_timing_callback(
                 request_id, 'apply_wiener_filter', duration, t_wiener
             )
 
-        # 4. Инференс
+        # 4. Скоростной инференс
         start_time = time.perf_counter()
 
         audio_tensor = torch.from_numpy(audio_np).unsqueeze(0).float().to(
             self.device
-            )
+        )
 
-        with torch.no_grad():
+        with torch.inference_mode():
             prediction = self.model(audio_tensor).item()
 
         t_inf = time.perf_counter() - start_time
         log_timing_callback(request_id, 'run_inference', duration, t_inf)
 
-        # Формирование результата
-        verdict = "spoof" if prediction > 0.5 else "bonafide"
+        # Классифицируем по идеальному порогу
+        verdict = "spoof" if prediction >= self.optimal_threshold else "bonafide"
 
         return {
             "duration": duration,

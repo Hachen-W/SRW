@@ -30,16 +30,29 @@ class PyAraDetector(BaseDetector):
 
         # 2. Инференс через библиотеку PyAra
         start_time = time.perf_counter()
-        # pyara.main.predict_audio возвращает 1 (spoof) или 0 (bonafide)
-        decision = pyara.main.predict_audio(str(file_path))
+        
+        # Пытаемся вытащить непрерывную вероятность (0.0 - 1.0) с помощью безопасного перебора:
+        try:
+            # А. Проверяем, поддерживает ли метод флаг возврата вероятностей
+            prediction = pyara.main.predict_audio(str(file_path), return_prob=True)
+        except TypeError:
+            try:
+                # Б. Проверяем, есть ли альтернативный метод для вероятностей (как predict_proba в sklearn)
+                prediction = pyara.main.predict_audio_proba(str(file_path))
+            except AttributeError:
+                # В. Откат: если библиотека жестко отдает только 0 или 1, забираем как есть
+                decision = pyara.main.predict_audio(str(file_path))
+                prediction = float(decision)
+
         t_inf = time.perf_counter() - start_time
         log_timing_callback(request_id, 'run_pyara_inference', duration, t_inf)
 
         # 3. Формирование результата
-        verdict = "spoof" if decision == 1 else "bonafide"
+        # Задаем стандартный порог 0.5 для непрерывных предсказаний
+        verdict = "spoof" if prediction >= 0.5 else "bonafide"
 
         return {
             "duration": duration,
-            "prediction": float(decision),
+            "prediction": float(prediction),
             "verdict": verdict
         }
