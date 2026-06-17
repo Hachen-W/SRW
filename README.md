@@ -37,7 +37,7 @@ uvicorn main:app --reload
 
 **Команды:**
 ```bash
-python -m benchmarks.evaluate_streaming --model pyara --max_samples 100
+python -m benchmarks.evaluate_streaming --model pyara --max_samples 1866
 ```
 
 ### Таймирование программы
@@ -63,11 +63,11 @@ python -m benchmarks.timing_pytorch
 
 ### Запуск тренировки
 
-**Директория:** `New_Sipuha/core/models`
+**Директория:** `New_Sipuha/core`
 
 **Команда:**
 ```bash
-python train.py
+python -m models.train
 ```
 
 ### Система обнаружения подделки голоса

@@ -4,25 +4,25 @@ from torch.utils.data import DataLoader, IterableDataset
 import torch.nn.functional as F
 from datasets import load_dataset, Audio
 
-# Исправлено: Импортируем из общего модуля моделей для стабильного запуска
 from models.pytorch_detector import DeepfakeDetector
 
 
 class StreamingAudioDataset(IterableDataset):
-    def __init__(self, hf_dataset_name, split="train", target_sr=16000, duration_sec=4):
+    def __init__(self, hf_dataset_name, split="train", target_sr=16000, target_length=64600):
         """
-        Использует потоковую загрузку, не занимая место на жестком диске.
+        Использует потоковую загрузку и готовит аудио по стандарту бенчмарка Nes2Net
+        (64,600 сэмплов, при нехватке — циклическое повторение tile-repeat).
         """
-        # 1. Загружаем датасет из облака в потоковом режиме
         self.dataset = load_dataset(hf_dataset_name, split=split, streaming=True)
         self.dataset = self.dataset.shuffle(buffer_size=1000, seed=42)
         
-        # 2. Автоматический ресемплинг до 16000 Гц
+        # Автоматический ресемплинг до 16000 Гц
         self.dataset = self.dataset.cast_column(
             "audio", Audio(sampling_rate=target_sr)
         )
         
-        self.target_length = target_sr * duration_sec
+        # Вместо секунд жестко задаем длину в сэмплах (из описания Nes2Net)
+        self.target_length = target_length
 
     def process_data(self, dataset):
         for item in dataset:
@@ -38,12 +38,13 @@ class StreamingAudioDataset(IterableDataset):
                 else:
                     waveform = torch.mean(waveform, dim=1)
 
-            # Приведение к фиксированной длине (Padding / Truncation)
+            # Приведение к фиксированной длине (Спецификация: 64,600 samples)
             if waveform.shape[0] > self.target_length:
                 waveform = waveform[:self.target_length]
             elif waveform.shape[0] < self.target_length:
-                pad_amount = self.target_length - waveform.shape[0]
-                waveform = F.pad(waveform, (0, pad_amount))
+                # Реализация tile-repeat (повторяем аудио вцикл, если оно короткое)
+                repeats = (self.target_length + waveform.shape[0] - 1) // waveform.shape[0]
+                waveform = waveform.repeat(repeats)[:self.target_length]
 
             yield waveform, torch.tensor(label, dtype=torch.float32)
 
@@ -67,7 +68,7 @@ if __name__ == '__main__':
         hf_dataset_name=hf_dataset_name,
         split="train",
         target_sr=16000,
-        duration_sec=4
+        target_length=64600  # Длина под стандарт Nes2Net Arena
     )
 
     train_loader = DataLoader(
@@ -77,29 +78,25 @@ if __name__ == '__main__':
         num_workers=0
     )
 
-    # Синхронизация устройств инференса и тренировки (CUDA -> MPS -> CPU)
     device = torch.device(
         'cuda' if torch.cuda.is_available()
         else 'mps' if torch.backends.mps.is_available()
         else 'cpu'
     )
     
+    # Твоя модель снова в деле
     model = DeepfakeDetector().to(device)
     criterion = nn.BCELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0003) # Немного подняли LR для адаптации 256 признаков
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0003)
 
-    # Настройка оптимизаций
     num_epochs = 10
-    
-    # Косинусный планировщик скорости обучения для плавной сходимости
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
     
-    # Скалер градиентов для AMP (смешанной точности) на CUDA
     use_amp = device.type == 'cuda'
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     model.train()
-    print(f"[*] Начинаем обучение новой архитектуры на устройстве: {str(device).upper()}...")
+    print(f"[*] Начинаем обучение твоей архитектуры на устройстве: {str(device).upper()}...")
     
     for epoch in range(num_epochs):
         running_loss = 0.0
@@ -113,12 +110,10 @@ if __name__ == '__main__':
 
             optimizer.zero_grad()
             
-            # Включаем Mixed Precision контекст, если тренируемся на GPU
             with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                 predictions = model(padded_audios)
                 loss = criterion(predictions, labels_tensor)
 
-            # Обратный проход через скалер градиентов
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -129,12 +124,10 @@ if __name__ == '__main__':
             if batches % 10 == 0:
                 print(f"-> Батч: {batches}, Loss: {loss.item():.4f}")
 
-        # Обновляем скорость обучения в конце каждой эпохи
         scheduler.step()
 
         epoch_loss = running_loss / batches if batches > 0 else 0
         print(f"==> Эпоха [{epoch+1}/{num_epochs}] завершена. Средний Loss: {epoch_loss:.4f}\n")
 
-    # Сохраняем веса под обновленную структуру пулинга
     torch.save(model.state_dict(), 'models/deepfake_model.pth')
-    print("💾 Обучение завершено! Новые веса успешно записаны в 'models/deepfake_model.pth'!")
+    print("💾 Обучение завершено! Веса успешно записаны в 'models/deepfake_model.pth'!")
