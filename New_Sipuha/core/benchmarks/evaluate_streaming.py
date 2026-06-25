@@ -13,7 +13,7 @@ from sklearn.metrics import roc_curve, auc, accuracy_score, precision_score, rec
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 
-# Импорт ваших детекторов
+# Импорт детекторов
 from models.pytorch_detector import PyTorchDetector
 from models.pyara_detector import PyAraDetector
 
@@ -63,8 +63,7 @@ def main():
     # Создаем временную директорию для изолированной работы с файлом
     with tempfile.TemporaryDirectory() as tmpdir:
         print("[*] Запуск валидационного инференса...")
-        
-        # ОПТИМИЗАЦИЯ: Один фиксированный путь для файла на весь жизненный цикл скрипта
+
         temp_file_path = os.path.join(tmpdir, "current_sample.wav")
         
         for idx, item in enumerate(tqdm(dataset, desc="Processing audio")):

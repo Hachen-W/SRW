@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from models.pytorch_detector import PyTorchDetector
 
 
-# Константы конфигурации из твоей НИР
+# Константы конфигурации
 TARGET_SR = 16000
 ALPHA = 0.3                  # Коэффициент экспоненциального сглаживания (EMA)
 MAX_BUFFER_SECONDS = 3       # Длина контекста для стабильного извлечения LFCC
@@ -54,7 +54,7 @@ class StreamingInferenceWorker:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 pass
 
-            # Если сессия новая — инициализируем под нее контекст в RAM
+            # Если сессия новая, то инициализируем под нее контекст в RAM
             if session_id not in self.active_sessions:
                 self.active_sessions[session_id] = {
                     "buffer": bytearray(),

@@ -15,8 +15,6 @@ except FileNotFoundError:
     print(f"Файл {FILE_NAME} не найден. Убедитесь, что запустили воркер и он успел накопить логи.")
     exit()
 
-# БЕЗОПАСНОСТЬ: Принудительно переводим числовые колонки в формат float.
-# Если там окажется текст (например, дубликат заголовка), он превратится в NaN.
 df['audio_duration'] = pd.to_numeric(df['audio_duration'], errors='coerce')
 df['execution_time'] = pd.to_numeric(df['execution_time'], errors='coerce')
 
@@ -40,7 +38,6 @@ print(stats)
 print("-" * 50)
 
 # 2. Истинные расчеты для M/G/1
-# Нас интересует только End-to-End время обслуживания (Ts) каждой заявки.
 e2e_df = df[df['function_name'].isin(
     ['process_message_e2e', 'timing_script_e2e']
     )]

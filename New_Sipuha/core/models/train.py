@@ -21,7 +21,7 @@ class StreamingAudioDataset(IterableDataset):
             "audio", Audio(sampling_rate=target_sr)
         )
         
-        # Вместо секунд жестко задаем длину в сэмплах (из описания Nes2Net)
+        # Вместо секунд жестко задаем длину в сэмплах
         self.target_length = target_length
 
     def process_data(self, dataset):

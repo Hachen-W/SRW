@@ -8,7 +8,6 @@ WS_URL = "ws://localhost:8000/audio/stream"
 AUTH_TOKEN = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2IiwianRpIjoiYWI5N2UzMWItODIwMi00MGE3LWEzMzEtOGI3NWJlM2ViM2U5IiwidHlwZSI6ImFjY2VzcyIsImZyZXNoIjpmYWxzZSwiY3NyZiI6Ijk5ZDA4ZDZkLWYwYzktNGUzNi1iYzU4LTQyYzhjMWNlNjYyZiIsImlhdCI6MTc4MDk2MjUzNiwiZXhwIjoxNzgwOTYzMTM2Ljg2OTE2Nywicm9sZSI6IkFETUlOIn0.yUZuASwirb0y5ZZ6kUGdhxf0Nj1QckcrhLdDILA7NAM"
 
 # Путь к тестовому файлу (PCM 16-bit, 16кГц, моно)
-# Возьмите любой файл из вашего валидационного датасета
 AUDIO_FILE_PATH = "test_audio.wav" 
 
 # Размер чанка: 500 мс при 16000 Гц (16000 * 2 байта на семпл * 0.5 сек = 16000 байт)
@@ -36,7 +35,7 @@ async def send_audio_stream():
                         response = json.loads(message)
                         print(f"[Сервер] -> {response}")
                         
-                        # Если сервер прислал сигнал прерывания (дипфейк обнаружен)
+                        # Если сервер прислал сигнал прерывания
                         if response.get("status") == "terminated":
                             print("\n[🚨 КРИТ] Звонок принудительно оборван банком! Обнаружен дипфейк.")
                             break

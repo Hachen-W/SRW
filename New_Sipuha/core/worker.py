@@ -6,7 +6,7 @@ import time
 import uuid
 from dotenv import load_dotenv
 
-# Импорты наших модулей
+# Импорты модулей
 from models.pytorch_detector import PyTorchDetector
 from models.pyara_detector import PyAraDetector
 from utils.metrics import MetricsLogger

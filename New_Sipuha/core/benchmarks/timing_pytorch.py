@@ -55,7 +55,6 @@ for i, sample in enumerate(dataset.take(20)):
     try:
         # 1. Сохраняем аудио во временный файл
         # Файл закроется сразу после блока with, но останется на диске.
-        # Наш универсальный worker.py сам удалит его в своем блоке finally!
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
             wavfile.write(tf.name, 16000, audio_array.astype(np.float32))
             temp_file_path = tf.name
