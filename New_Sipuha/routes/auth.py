@@ -32,9 +32,9 @@ def rate_limit_dependency(request: Request):
             pass
             
     # Динамически раздаем лимиты и ключи
-    if role == UserRole.SERVICE.name:
+    if role in (UserRole.SERVICE.name, UserRole.ADMIN.name):
         limit_str = "120/minute"
-        key = f"service_{user_id}"
+        key = f"privileged_{user_id}"
     elif user_id:
         limit_str = "10/minute"
         key = f"user_{user_id}"
