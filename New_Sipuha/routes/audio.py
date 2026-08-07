@@ -8,7 +8,7 @@ import pika
 import redis
 import asyncio
 from fastapi import APIRouter, Depends, UploadFile, \
-    File, HTTPException, Request, WebSocket, WebSocketDisconnect
+    File, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from database.create_tables import get_db
@@ -24,6 +24,7 @@ redis_client_json = redis.Redis(host=redis_host, port=6379, db=0, decode_respons
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_EXTENSIONS = {"wav", "mp3", "aac", "flac", "ogg"}
+ALLOWED_MODELS = {"pytorch", "pyara"}
 
 
 def get_current_verified_session(
@@ -118,8 +119,12 @@ async def websocket_audio_stream(websocket: WebSocket, db: Session = Depends(get
     ])
 async def detect_deepfake(
         file: UploadFile = File(...),
+        model: str = Form("pytorch"),
         current_session: dict = Depends(get_current_verified_session)
         ):
+    if model not in ALLOWED_MODELS:
+        raise HTTPException(status_code=400, detail="Unknown model")
+
     if file.size > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large")
 
@@ -146,6 +151,7 @@ async def detect_deepfake(
         "client_id": "ivr_system_01",
         "timestamp": time.time(),
         "file_path": file_path,
+        "model": model,
         "priority": "high"
         }
 

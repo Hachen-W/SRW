@@ -23,6 +23,25 @@ def connect_to_rabbitmq(host, attempts=15, pause=3):
     raise RuntimeError(f"RabbitMQ на {host} так и не ответил")
 
 
+class DetectorPool:
+    """Держит модели по имени и создаёт их при первом обращении."""
+
+    def __init__(self, default_name):
+        self.default_name = default_name
+        self.loaded = {}
+
+    def get(self, name):
+        name = (name or self.default_name).lower()
+        if name not in ("pytorch", "pyara"):
+            name = self.default_name
+        if name not in self.loaded:
+            print(f"[*] Инициализация модели: {name}")
+            self.loaded[name] = (
+                PyAraDetector() if name == "pyara" else PyTorchDetector()
+            )
+        return name, self.loaded[name]
+
+
 def save_result_to_redis(redis_client, request_id, result_payload):
     start_time = time.perf_counter()
     redis_client.set(request_id, json.dumps(result_payload), ex=3600)
@@ -35,14 +54,15 @@ def cleanup_temporary_file(file_path):
 
 
 def process_message(
-        ch, method, properties, body, active_model, redis_client, logger
+        ch, method, properties, body, pool, redis_client, logger
         ):
     e2e_start_time = time.perf_counter()
     task_data = json.loads(body)
     file_path = task_data["file_path"]
     request_id = task_data.get("request_id", str(uuid.uuid4()))
+    model_name, active_model = pool.get(task_data.get("model"))
 
-    print(f"[*] Началась обработка файла: {file_path}")
+    print(f"[*] Началась обработка файла: {file_path} ({model_name})")
     duration = 0.0
 
     try:
@@ -53,7 +73,8 @@ def process_message(
         result_payload = {
             "status": "completed",
             "prediction": result["prediction"],
-            "verdict": result["verdict"]
+            "verdict": result["verdict"],
+            "model": model_name
         }
 
     except ValueError as ve:
@@ -91,11 +112,8 @@ if __name__ == "__main__":
     # Инициализируем логгер с именем конкретной модели
     logger = MetricsLogger(log_file=f"logs/{model_type}.csv", batch_size=10)
 
-    print(f"[*] Инициализация модели: {model_type}")
-    if model_type == "pyara":
-        detector = PyAraDetector()
-    else:
-        detector = PyTorchDetector()
+    # Модель выбирается в каждом запросе, MODEL_TYPE остаётся значением по умолчанию
+    pool = DetectorPool(model_type)
 
     redis_host = os.getenv("REDIS_HOST", "localhost")
     redis_client = redis.Redis(
@@ -111,10 +129,9 @@ if __name__ == "__main__":
     channel.basic_consume(
         queue='audio_processing_queue',
         on_message_callback=lambda ch, m, p, b: process_message(
-            ch, m, p, b, detector, redis_client, logger
+            ch, m, p, b, pool, redis_client, logger
         )
     )
 
-    print(f"[*] Универсальный воркер ({model_type.upper()}) успешно запущен.")
+    print(f"[*] Универсальный воркер запущен. Модель по умолчанию: {model_type}")
     channel.start_consuming()
-    
