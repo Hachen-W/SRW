@@ -4,7 +4,14 @@ from settings.config import settings
 from database.tables import table_class
 
 #Database setup
-engine = create_engine(settings.DATABASE_URL)
+# SQLite по умолчанию запрещает использовать соединение из другого потока,
+# а FastAPI выполняет синхронные зависимости в пуле потоков — на websocket
+# сессия создаётся в одном потоке, а закрывается в другом.
+sqlite_args = (
+    {"check_same_thread": False}
+    if settings.DATABASE_URL.startswith("sqlite") else {}
+)
+engine = create_engine(settings.DATABASE_URL, connect_args=sqlite_args)
 
 session_local = sessionmaker(autocommit=False, bind=engine)
 

@@ -66,6 +66,20 @@ services:
       redis:
         condition: service_healthy
 
+  stream-worker:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    working_dir: /app/New_Sipuha/core
+    command: python streaming_worker.py
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+
 volumes:
   audio:
   db:
