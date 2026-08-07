@@ -91,8 +91,9 @@ if __name__ == "__main__":
         host=redis_host, port=6379, db=0, decode_responses=True
         )
 
+    rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
     connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host='localhost'
+        host=rabbitmq_host
         ))
     channel = connection.channel()
     channel.queue_declare(queue='audio_processing_queue', durable=True)
