@@ -7,6 +7,7 @@ import torchaudio.transforms as T
 import numpy as np
 from scipy.signal import welch, wiener
 from models.base import BaseDetector
+import soundfile as sf
 
 
 class DeepfakeDetector(nn.Module):
@@ -130,7 +131,9 @@ class PyTorchDetector(BaseDetector):
         start_time = time.perf_counter()
 
         # Загрузка через torchaudio
-        waveform, sr = torchaudio.load(file_path)
+        
+        data, sr = sf.read(file_path, dtype="float32", always_2d=True)
+        waveform = torch.from_numpy(data.T)
 
         # Конвертация в моно
         if waveform.shape[0] > 1:

@@ -12,6 +12,17 @@ from models.pyara_detector import PyAraDetector
 from utils.metrics import MetricsLogger
 
 
+def connect_to_rabbitmq(host, attempts=15, pause=3):
+    """Ждёт брокер: при старте контейнеров он может быть ещё не готов."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return pika.BlockingConnection(pika.ConnectionParameters(host=host))
+        except pika.exceptions.AMQPConnectionError:
+            print(f"[!] RabbitMQ недоступен ({attempt}/{attempts}), жду {pause} c")
+            time.sleep(pause)
+    raise RuntimeError(f"RabbitMQ на {host} так и не ответил")
+
+
 def save_result_to_redis(redis_client, request_id, result_payload):
     start_time = time.perf_counter()
     redis_client.set(request_id, json.dumps(result_payload), ex=3600)
@@ -92,9 +103,7 @@ if __name__ == "__main__":
         )
 
     rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host=rabbitmq_host
-        ))
+    connection = connect_to_rabbitmq(rabbitmq_host)
     channel = connection.channel()
     channel.queue_declare(queue='audio_processing_queue', durable=True)
 
@@ -108,3 +117,4 @@ if __name__ == "__main__":
 
     print(f"[*] Универсальный воркер ({model_type.upper()}) успешно запущен.")
     channel.start_consuming()
+    

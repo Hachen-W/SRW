@@ -5,7 +5,7 @@ services:
       - "5672:5672"
       - "15672:15672"     # веб-панель, логин guest/guest
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -26,6 +26,7 @@ services:
       dockerfile: deploy/Dockerfile
     working_dir: /app/New_Sipuha
     command: uvicorn main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
     env_file: .env
     environment:
       REDIS_HOST: redis
@@ -49,6 +50,7 @@ services:
       dockerfile: deploy/Dockerfile
     working_dir: /app/New_Sipuha/core
     command: python worker.py
+    restart: unless-stopped
     env_file: .env
     environment:
       REDIS_HOST: redis
