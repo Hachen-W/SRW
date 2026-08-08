@@ -22,7 +22,9 @@ redis_host = os.getenv("REDIS_HOST", "localhost")
 redis_client_raw = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=False)
 redis_client_json = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=True)
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+# Лимит на размер загружаемого файла. Меняется переменной окружения,
+# пересобирать образ не нужно.
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "500")) * 1024 * 1024
 ALLOWED_EXTENSIONS = {"wav", "mp3", "aac", "flac", "ogg"}
 ALLOWED_MODELS = {"pytorch", "pyara"}
 
