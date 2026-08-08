@@ -3,6 +3,7 @@ import json
 import redis
 from dotenv import load_dotenv
 from models.pytorch_detector import PyTorchDetector
+from models.pyara_detector import PyAraDetector
 
 
 # Константы конфигурации
@@ -10,14 +11,18 @@ TARGET_SR = 16000
 ALPHA = 0.3                  # Коэффициент экспоненциального сглаживания (EMA)
 MAX_BUFFER_SECONDS = 3       # Длина контекста для стабильного извлечения LFCC
 
+# Обрывать ли сессию на первом вердикте spoof. Для IVR это нужно, для разбора
+# записи целиком — мешает: кривая обрывается на первом срабатывании.
+TERMINATE_ON_SPOOF = os.getenv("TERMINATE_ON_SPOOF", "true").lower() == "true"
+
 
 class StreamingInferenceWorker:
     def __init__(self):
         load_dotenv()
-        print("[*] Инициализация PyTorchDetector для потокового режима...")
 
-        # Инициализируем модель один раз при старте воркера
-        self.detector = PyTorchDetector()
+        # Модели создаются при первом обращении: их выбирает клиент для каждой сессии
+        self.default_model = os.getenv("MODEL_TYPE", "pytorch").lower()
+        self.detectors = {}
 
         redis_host = os.getenv("REDIS_HOST", "localhost")
         # Два клиента: один для сырых байтов звука, второй для отправки ответов в формате JSON
@@ -29,11 +34,23 @@ class StreamingInferenceWorker:
         self.bytes_per_second = TARGET_SR * 2
         self.max_buffer_bytes = MAX_BUFFER_SECONDS * self.bytes_per_second
 
+    def get_detector(self, name):
+        """Возвращает модель по имени, создавая её при первом обращении."""
+        name = (name or self.default_model).lower()
+        if name not in ("pytorch", "pyara"):
+            name = self.default_model
+        if name not in self.detectors:
+            print(f"[*] Инициализация модели для потока: {name}")
+            self.detectors[name] = (
+                PyAraDetector() if name == "pyara" else PyTorchDetector()
+            )
+        return self.detectors[name]
+
     def run(self):
         pubsub = self.redis_raw.pubsub()
         # Подписываемся на каналы аудиопотоков от FastAPI шлюза
         pubsub.psubscribe("stream:audio:*")
-        print(f"[*] Стриминг-воркер запущен. Порог отсечения: {self.detector.optimal_threshold}")
+        print(f"[*] Стриминг-воркер запущен. Модель по умолчанию: {self.default_model}")
 
         for message in pubsub.listen():
             if message['type'] != 'pmessage':
@@ -46,10 +63,22 @@ class StreamingInferenceWorker:
             # Проверяем управляющий сигнал завершения сессии (EOF)
             try:
                 control_payload = json.loads(raw_data.decode('utf-8'))
-                if control_payload.get("control") == "EOF":
+                control = control_payload.get("control")
+                if control == "EOF":
                     if session_id in self.active_sessions:
                         del self.active_sessions[session_id]
                         print(f"[*] Сессия {session_id} завершена. Буфер очищен.")
+                    continue
+                if control == "INIT":
+                    # Клиент сообщил, какой моделью считать эту сессию
+                    self.active_sessions[session_id] = {
+                        "buffer": bytearray(),
+                        "cumulative_score": 0.0,
+                        "is_first": True,
+                        "received_bytes": 0,
+                        "model": control_payload.get("model")
+                    }
+                    self.get_detector(control_payload.get("model"))
                     continue
             except (UnicodeDecodeError, json.JSONDecodeError):
                 pass
@@ -59,11 +88,14 @@ class StreamingInferenceWorker:
                 self.active_sessions[session_id] = {
                     "buffer": bytearray(),
                     "cumulative_score": 0.0,
-                    "is_first": True
+                    "is_first": True,
+                    "received_bytes": 0,
+                    "model": self.default_model
                 }
 
             session = self.active_sessions[session_id]
             session["buffer"].extend(raw_data)
+            session["received_bytes"] += len(raw_data)
 
             # Поддерживаем размер скользящего окна
             if len(session["buffer"]) > self.max_buffer_bytes:
@@ -73,8 +105,9 @@ class StreamingInferenceWorker:
             if len(session["buffer"]) < self.bytes_per_second:
                 continue
 
-            # Передаем накопленный массив байт
-            current_score = self.detector.process_stream(bytes(session["buffer"]))
+            # Передаем накопленный массив байт выбранной модели
+            detector = self.get_detector(session.get("model"))
+            current_score = detector.process_stream(bytes(session["buffer"]))
 
             # Расчет математики кумулятивной вероятности (EMA)
             if session["is_first"]:
@@ -84,16 +117,19 @@ class StreamingInferenceWorker:
                 session["cumulative_score"] = ALPHA * current_score + (1 - ALPHA) * session["cumulative_score"]
 
             # Классифицируем по валидационному порогу
-            verdict = "spoof" if session["cumulative_score"] > self.detector.optimal_threshold else "bonafide"
+            verdict = "spoof" if session["cumulative_score"] > detector.optimal_threshold else "bonafide"
 
             result_payload = {
                 "status": "processing",
                 "current_score": round(current_score, 4),
                 "cumulative_score": round(session["cumulative_score"], 4),
-                "verdict": verdict
+                "verdict": verdict,
+                "model": session.get("model") or self.default_model,
+                # Позицию считает воркер: клиент не знает, насколько мы отстаём
+                "position": round(session["received_bytes"] / self.bytes_per_second, 2)
             }
 
-            if verdict == "spoof":
+            if verdict == "spoof" and TERMINATE_ON_SPOOF:
                 result_payload["status"] = "terminated"
                 result_payload["reason"] = "Deepfake detected! Cutoff triggered."
 
@@ -102,7 +138,8 @@ class StreamingInferenceWorker:
             self.redis_json.publish(result_channel, json.dumps(result_payload))
             
             # Если звонок принудительно оборван, стираем буфер сессии из памяти
-            if verdict == "spoof" and session_id in self.active_sessions:
+            if (verdict == "spoof" and TERMINATE_ON_SPOOF
+                    and session_id in self.active_sessions):
                 del self.active_sessions[session_id]
 
 

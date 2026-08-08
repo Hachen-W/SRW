@@ -66,6 +66,12 @@ async def websocket_audio_stream(websocket: WebSocket, db: Session = Depends(get
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
+    # Модель выбирает клиент: ?model=pytorch или ?model=pyara
+    model = websocket.query_params.get("model", "pytorch")
+    if model not in ALLOWED_MODELS:
+        await websocket.close(code=4000, reason="Unknown model")
+        return
+
     session_id = str(uuid.uuid4())
     audio_channel = f"stream:audio:{session_id}"
     result_channel = f"stream:result:{session_id}"
@@ -95,6 +101,13 @@ async def websocket_audio_stream(websocket: WebSocket, db: Session = Depends(get
     # Запускаем фоновое слушание ответов воркера
     listen_task = asyncio.create_task(listen_to_worker())
 
+    # Сообщаем воркеру, какой моделью считать эту сессию.
+    # Публикуем тем же соединением, что и звук: порядок сообщений гарантируется
+    # только внутри одного соединения, иначе чанк может обогнать INIT.
+    redis_client_raw.publish(
+        audio_channel, json.dumps({"control": "INIT", "model": model}).encode()
+        )
+
     try:
         while True:
             # Принимаем бинарный чанк аудио от IVR-системы
@@ -109,7 +122,9 @@ async def websocket_audio_stream(websocket: WebSocket, db: Session = Depends(get
         # Чистим ресурсы
         listen_task.cancel()
         pubsub.unsubscribe(result_channel)
-        redis_client_json.publish(audio_channel, json.dumps({"control": "EOF"}))
+        redis_client_raw.publish(
+            audio_channel, json.dumps({"control": "EOF"}).encode()
+            )
 
 
 @router_audio.post("/detect", status_code=202, dependencies=[
