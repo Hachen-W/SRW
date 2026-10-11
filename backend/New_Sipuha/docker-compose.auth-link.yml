@@ -1,0 +1,20 @@
+# Необязательная надстройка: подключает API к Redis сервиса аутентификации,
+# чтобы выход пользователя отзывал уже выданные токены.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.auth-link.yml up -d
+#
+# Без неё сервисы связаны только общим JWT_SECRET_KEY и во время работы
+# друг о друге не знают.
+services:
+  api:
+    environment:
+      AUTH_REDIS_HOST: ${AUTH_REDIS_HOST:-auth-redis}
+      AUTH_REDIS_PORT: ${AUTH_REDIS_PORT:-6379}
+    networks:
+      - default
+      - auth-net
+
+networks:
+  auth-net:
+    external: true
+    name: ${AUTH_NETWORK:-auth-service_default}

@@ -1,0 +1,144 @@
+# Единый запуск всей системы: сервис аутентификации + аудио-сервис.
+#
+# Секрет задаётся один раз в .env рядом с этим файлом и раздаётся обоим
+# сервисам — в самих проектах его прописывать не нужно.
+#
+#   docker compose up -d
+#
+# Каждый проект по-прежнему можно поднять отдельно его собственным
+# docker-compose.yml — этот файл их не заменяет, а дополняет.
+
+services:
+
+  # ---------- сервис аутентификации ----------
+
+  auth-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  auth:
+    build:
+      context: ${AUTH_PATH:-./auth-service}
+    image: auth-service-app
+    restart: unless-stopped
+    environment:
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?нужно задать JWT_SECRET_KEY в .env}
+      DATABASE_URL: sqlite:////data/users.db
+      REDIS_HOST: auth-redis
+      REDIS_PORT: 6379
+    volumes:
+      - users-db:/data
+    ports:
+      - "${AUTH_PORT:-8001}:8000"
+    depends_on:
+      auth-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # ---------- инфраструктура аудио-сервиса ----------
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    volumes:
+      - ${AUDIO_PATH:-./New_Sipuha}/deploy/rabbitmq.conf:/etc/rabbitmq/conf.d/20-memory.conf:ro
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # ---------- аудио-сервис ----------
+
+  api:
+    build:
+      context: ${AUDIO_PATH:-./New_Sipuha}
+      dockerfile: deploy/Dockerfile
+    image: new_sipuha-app
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    environment:
+      # Тот же секрет, что у сервиса аутентификации — отсюда, а не из
+      # отдельного .env проекта
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?нужно задать JWT_SECRET_KEY в .env}
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-500}
+      TMPDIR: /data/audio
+      # Redis аутентификации виден напрямую: выход пользователя отзывает
+      # уже выданные токены
+      AUTH_REDIS_HOST: auth-redis
+      AUTH_REDIS_PORT: 6379
+    volumes:
+      - audio:/data/audio
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      auth:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: new_sipuha-app
+    restart: unless-stopped
+    working_dir: /app/core
+    command: python worker.py
+    environment:
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      MODEL_TYPE: ${MODEL_TYPE:-pytorch}
+      TMPDIR: /data/audio
+    volumes:
+      - audio:/data/audio
+      - ${AUDIO_PATH:-./New_Sipuha}/core/logs:/app/core/logs
+    depends_on:
+      api:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  stream-worker:
+    image: new_sipuha-app
+    restart: unless-stopped
+    working_dir: /app/core
+    command: python streaming_worker.py
+    environment:
+      REDIS_HOST: redis
+      MODEL_TYPE: ${MODEL_TYPE:-pytorch}
+      TERMINATE_ON_SPOOF: "false"
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+volumes:
+  users-db:
+  audio:
